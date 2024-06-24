@@ -1,0 +1,167 @@
+--CREATION OF TABLES 
+create table books(book_id number(6) constraint books_pk primary key, name varchar(30) constraint books_name not null, 
+author varchar(30), genre varchar(30), copies_available int, publisher_id number(6) constraint books_pubid not null, 
+constraint publisher_fk foreign key(publisher_id) references publisher(publisher_id)); 
+ 
+create table members(member_id number(6) constraint members_pk primary key, name varchar(30) constraint members_name not 
+null, books_issued int, dues float, date_of_joining date constraint members_date not null, phone_no number(10) 
+constraint members_phone not null, email varchar(40));  
+ 
+create table publisher(publisher_id number(6) constraint publisher_pk primary key, name varchar(30) constraint 
+publisher_name not null, phone_no number(10) constraint publisher_phone not null, email varchar(40), address 
+varchar(50) constraint publisher_address not null); 
+ 
+create table copies(copy_id number(6) constraint copies_pk primary key, book_id number(6) constraint book_nn1 not null, 
+member_id number(6), issue_date date, due_date date, constraint book_fk1 foreign key (book_id) references 
+books(book_id), constraint member_fk1 foreign key (member_id) references members(member_id)); 
+ 
+create table history(copy_id number(6) constraint copy_nn not null, book_id number(6) constraint book_nn2 not null, 
+member_id number(6) constraint member_nn not null, issue_date date constraint issue_nn not null, return_date date constraint 
+return_nn not null);
+
+-- TRIGGER FOR NO OPERATIONS ON SUNDAY 
+create or replace trigger no_operations_on_sunday 
+before insert or update or delete on copies 
+begin 
+if to_char(sysdate, 'day')='Sunday' then 
+raise_application_error(-20001, 'No borrowing allowed on sunday.'); 
+end if; 
+end;
+
+-- TRGGER TO INSERT THE RETURNED BOOK INTO HISTORY AND UPDATE THE VALUES OF COPIES_AVAILABLE IN BOOKS TABLE AND BOOKS_ISSUED IN MEMBERS 
+create or replace trigger book_returned 
+before delete on copies 
+for each row 
+begin 
+insert into history values(:old.copy_id, :old.book_id, :old.member_id, :old.issue_date, sysdate); 
+update books set copies_available=copies_available+1 where book_id=:old.book_id; 
+update members set books_issued=books_issued-1 where member_id=:old.member_id; 
+end; 
+
+ -- TRGGER UPDATE THE VALUES OF COPIES_AVAILABLE IN BOOKS TABLE AND BOOKS_ISSUED IN MEMBERS WHEN A BOOK IS ISSUED 
+create or replace trigger book_issued 
+after update of member_id on copies 
+for each row 
+begin 
+update books set copies_available=copies_available-1 where book_id=:new.book_id; 
+update members set books_issued=books_issued+1 where member_id=:new.member_id; 
+end; 
+
+-- PROCEDURE TO DISPLAY THE BOOK DETAILS 
+create or replace procedure display_books(id in number, book_name in varchar) is 
+cursor c1 is select * from books where book_id=id or name=book_name; 
+b_id books.book_id%type; 
+begin 
+select book_id into b_id from books where book_id=id or name=book_name; 
+for rec in c1 loop 
+dbms_output.put_line('Book ID: ' || rec.book_id || chr(10) || 'Name: ' || rec.name || chr(10) || 'Author: ' || rec.author || 
+chr(10) || 'Genre: ' || rec.genre || chr(10) || 'Number of Copies Available: ' || rec.copies_available); 
+end loop; 
+exception 
+when no_data_found then 
+dbms_output.put_line('Invalid ID or book not found.'); 
+end; 
+
+-- PROCEDURE TO DISPLAY THE MEMBER DETAILS 
+create or replace procedure display_members(id in number, member_name in varchar) is 
+cursor c1 is select * from members where member_id=id or name=member_name; 
+m_id members.member_id%type; 
+begin 
+select member_id into m_id from members where member_id=id or name=member_name; 
+for rec in c1 loop 
+dbms_output.put_line('Member ID: ' || rec.member_id || chr(10) || 'Name: ' || rec.name || chr(10) || 'Number of books 
+borrowed: ' || rec.books_issued || chr(10) || 'Dues: ' || rec.dues || chr(10) || 'Date of joining: ' || 
+rec.date_of_joining || chr(10) || 'Phone number: ' || rec.phone_no || chr(10) || 'Email: ' || rec.email); 
+end loop; 
+exception 
+when no_data_found then 
+dbms_output.put_line('Invalid ID or member not found.'); 
+end; 
+
+-- PROCEDURE TO DISPLAY THE PUBLISHER DETAILS 
+create or replace procedure display_publisher(id in number, publisher_name in varchar) is 
+cursor c1 is select * from publisher where publisher_id=id or name=publisher_name; 
+cursor c2 is select book_id, name from books where publisher_id in (select publisher_id from publisher where publisher_id=id or name=publisher_name); 
+p_id publisher.publisher_id%type; 
+begin 
+select publisher_id into p_id from publisher where publisher_id=id or name=publisher_name; 
+for rec in c1 loop 
+dbms_output.put_line('Publisher ID: ' || rec.publisher_id || chr(10) || 'Name: ' || rec.name || chr(10) || 'Phone number: ' 
+|| rec.phone_no || chr(10) || 'Email: ' || rec.email || chr(10) || 'Address: ' || rec.address || chr(10)); dbms_output.put_line('ID      BOOK'); 
+for rec in c2 loop 
+dbms_output.put_line(rec.book_id || '  ' || rec.name); 
+end loop;  
+end loop; 
+exception 
+when no_data_found then 
+dbms_output.put_line('Invalid ID or publisher not found.'); 
+end; 
+
+-- PROCEDURE FOR ISSUING/BORROWING A BOOK 
+create or replace procedure book_issued(c_id in number, m_id in number) is no_of_books members.books_issued%type; 
+id copies.copy_id%type; 
+fine members.dues%type; 
+begin 
+select member_id into id from copies where copy_id=c_id; 
+select dues into fine from members where member_id=m_id; 
+if fine>200 then 
+raise_application_error(-20003, 'Clear previous dues to issue new book.');  
+if id is not null then 
+raise_application_error(-20002, 'Book already issued.'); 
+end if; 
+select books_issued into no_of_books from members where member_id=m_id; 
+if no_of_books<5 then 
+update copies set member_id=m_id, issue_date=sysdate, due_date=sysdate+1 where copy_id=c_id; 
+else 
+dbms_output.put_line('Maximum limit(5) reached on book borrowing.'); 
+end if; 
+exception 
+when no_data_found then 
+dbms_output.put_line('Invalid ID.'); 
+end; 
+
+-- PROCEDURE FOR RETURNING A BOOK 
+create or replace procedure book_returned(id in number) is 
+b_id history.book_id%type; 
+c_id copies.copy_id%type; 
+begin 
+select copy_id into c_id from copies where copy_id=id; 
+delete from copies where copy_id=c_id; 
+select book_id into b_id from history where copy_id=c_id; 
+insert into copies(copy_id, book_id) values (c_id, b_id); 
+exception 
+when no_data_found then 
+dbms_output.put_line('Invalid ID.'); 
+end; 
+
+-- PROCDEDURE TO CALL THE dues_calc FUNCTION EVERYDAY 
+create or replace procedure calculate_dues is 
+cursor c1 is select member_id from members; 
+fine float; 
+begin 
+for rec in c1 loop 
+fine := dues_calc(rec.member_id); 
+update members set dues=fine where member_id=rec.member_id; 
+end loop; 
+end; 
+
+ -- PROCEDURE TO UPDATE DUES WHEN THE MEMBER PAYS FULL/PARTIAL AMOUNT 
+create or replace procedure dues_paid(m_id in number, amount in number) as 
+begin  
+update members set dues=dues-amount where member_id=m_id; 
+end;
+
+-- FUNCTION TO CALCULATE DUES 
+create or replace function dues_calc(m_id in number) return float is 
+cursor c1 is select due_date from copies where member_id=m_id; 
+days number; 
+fine float:=0; 
+begin 
+for rec in c1 loop 
+days:= round(sysdate - rec.due_date, 0); 
+if days>0 then 
+fine:=fine + days * 5; 
+end if; 
+end loop; 
+return fine; 
+end; 
